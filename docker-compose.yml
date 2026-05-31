@@ -1,0 +1,164 @@
+
+# ─────────────────────────────────────────────────────────────────
+#  PHASE 1: PostgreSQL + Redis only
+#  To start: docker-compose up -d
+#  Kafka / Debezium are commented out — uncomment in Phase 3
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL 16 ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: ffee-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: featureflags
+      POSTGRES_USER: ffee
+      POSTGRES_PASSWORD: ffee_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Run init SQL on first boot
+      - ./server/db/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql
+    # Enable WAL logical replication (required for Debezium in Phase 3)
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_replication_slots=5
+        -c max_wal_senders=5
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ffee -d featureflags"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis 7 ────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ffee-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Flag API Server ────────────────────────────────────────────
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: ffee-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "9090:9090"   # Prometheus metrics endpoint
+    environment:
+      DATABASE_URL: postgres://ffee:ffee_secret@postgres:5432/featureflags?sslmode=disable
+      REDIS_ADDR: redis:6379
+      SERVER_PORT: "8080"
+      METRICS_PORT: "9090"
+      LOG_LEVEL: info
+      ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Prometheus ─────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: ffee-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=7d"
+    depends_on:
+      - server
+
+  # ── Grafana ────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: ffee-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/feature-flags.json
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+
+# ── PHASE 3: Uncomment below when ready ────────────────────────
+#  zookeeper:
+#    image: confluentinc/cp-zookeeper:7.6.0
+#    container_name: ffee-zookeeper
+#    environment:
+#      ZOOKEEPER_CLIENT_PORT: 2181
+#      ZOOKEEPER_TICK_TIME: 2000
+#    ports:
+#      - "2181:2181"
+#
+#  kafka:
+#    image: confluentinc/cp-kafka:7.6.0
+#    container_name: ffee-kafka
+#    depends_on:
+#      - zookeeper
+#    ports:
+#      - "9092:9092"
+#    environment:
+#      KAFKA_BROKER_ID: 1
+#      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+#      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+#      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+#      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+#      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+#      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+#
+#  debezium:
+#    image: debezium/connect:2.6
+#    container_name: ffee-debezium
+#    depends_on:
+#      - kafka
+#      - postgres
+#    ports:
+#      - "8083:8083"
+#    environment:
+#      BOOTSTRAP_SERVERS: kafka:29092
+#      GROUP_ID: debezium-group
+#      CONFIG_STORAGE_TOPIC: debezium_configs
+#      OFFSET_STORAGE_TOPIC: debezium_offsets
+#      STATUS_STORAGE_TOPIC: debezium_status
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:

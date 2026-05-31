@@ -1,0 +1,73 @@
+# ── Go ────────────────────────────────────────────────────────────
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server/server
+worker/worker
+
+# Test binary
+*.test
+
+# Output of go coverage tool
+*.out
+coverage.html
+
+# Go workspace file
+go.work
+go.work.sum
+
+# ── Docker ────────────────────────────────────────────────────────
+# Don't ignore docker-compose.yml — it's part of the project
+
+# ── Environment files ─────────────────────────────────────────────
+# NEVER commit real .env files (they contain secrets)
+.env
+.env.local
+.env.production
+.env.staging
+# DO commit .env.example (it's a template with no real secrets)
+!.env.example
+
+# ── Node / React Admin UI ─────────────────────────────────────────
+admin-ui/node_modules/
+admin-ui/dist/
+admin-ui/.vite/
+admin-ui/.env
+admin-ui/.env.local
+
+# ── IDE / Editor ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── OS ────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# ── Grafana ───────────────────────────────────────────────────────
+# Don't commit Grafana's local state (auto-generated)
+grafana/grafana.db
+
+# ── Prometheus ────────────────────────────────────────────────────
+# Don't commit Prometheus data directory
+prometheus/data/
+
+# ── Logs ──────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Temporary files ───────────────────────────────────────────────
+tmp/
+temp/
