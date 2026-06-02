@@ -28,6 +28,10 @@ import (
 
 // makeClient builds a Client with a pre-populated flag map (no server needed).
 func makeClient(flags map[string]FlagState) *Client {
+	for k, v := range flags {
+		sortTargetingRules(v.TargetingRules)
+		flags[k] = v
+	}
 	c := &Client{flags: flags}
 	return c
 }
@@ -88,9 +92,15 @@ func TestBoolVariation_ZeroPercentRollout(t *testing.T) {
 	c := makeClient(map[string]FlagState{"f": flagEnabled(0)})
 	users := []string{"alice", "bob", "charlie", "u-999"}
 	for _, u := range users {
-		got := c.BoolVariation("f", UserContext{UserID: u}, true)
+		// Test with default value = false
+		got := c.BoolVariation("f", UserContext{UserID: u}, false)
 		if got {
-			t.Errorf("user %q: 0%% rollout should always return default, got true", u)
+			t.Errorf("user %q: 0%% rollout should always return default (false), got true", u)
+		}
+		// Test with default value = true
+		got = c.BoolVariation("f", UserContext{UserID: u}, true)
+		if !got {
+			t.Errorf("user %q: 0%% rollout should always return default (true), got false", u)
 		}
 	}
 }

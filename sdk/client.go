@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -118,6 +119,7 @@ func (c *Client) bootstrap() error {
 
 	c.mu.Lock()
 	for k, v := range apiResp.Data {
+		sortTargetingRules(v.TargetingRules)
 		c.flags[k] = v
 	}
 	c.mu.Unlock()
@@ -251,6 +253,7 @@ func (c *Client) evaluate(flagKey string, ctx UserContext) (json.RawMessage, boo
 
 // updateFlag atomically replaces a flag in the in-memory store.
 func (c *Client) updateFlag(state FlagState) {
+	sortTargetingRules(state.TargetingRules)
 	c.mu.Lock()
 	c.flags[state.FlagKey] = state
 	c.mu.Unlock()
@@ -262,4 +265,11 @@ func (c *Client) updateFlag(state FlagState) {
 	for _, fn := range cbs {
 		fn(state)
 	}
+}
+
+// sortTargetingRules sorts a list of rules in ascending priority order (lower number = first).
+func sortTargetingRules(rules []TargetingRule) {
+	sort.Slice(rules, func(i, j int) bool {
+		return rules[i].Priority < rules[j].Priority
+	})
 }
