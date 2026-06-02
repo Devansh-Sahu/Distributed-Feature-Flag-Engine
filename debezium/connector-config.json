@@ -1,0 +1,34 @@
+{
+  "name": "ffee-postgres-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+
+    "database.hostname": "ffee-postgres",
+    "database.port": "5432",
+    "database.user": "ffee",
+    "database.password": "ffee_secret",
+    "database.dbname": "featureflags",
+
+    "topic.prefix": "ffee",
+
+    "table.include.list": "public.flag_configs,public.targeting_rules",
+
+    "plugin.name": "pgoutput",
+    "slot.name": "ffee_debezium_slot",
+    "publication.name": "ffee_publication",
+
+    "snapshot.mode": "initial",
+
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+
+    "decimal.handling.mode": "string",
+    "interval.handling.mode": "string",
+
+    "heartbeat.interval.ms": "10000",
+
+    "tombstones.on.delete": "false"
+  }
+}

@@ -15,7 +15,13 @@ scrape_configs:
     static_configs:
       - targets: ["server:9090"]
     metrics_path: /metrics
-    scrape_interval: 10s  # Higher frequency for the main service
+    scrape_interval: 10s
+
+  # ── CDC Worker ─────────────────────────────────────────────────
+  # (Phase 5 will add Prometheus metrics to the worker)
+  # - job_name: "ffee-worker"
+  #   static_configs:
+  #     - targets: ["worker:9095"]
 
   # ── Prometheus self-monitoring ─────────────────────────────────
   - job_name: "prometheus"

@@ -1,8 +1,7 @@
 
 # ─────────────────────────────────────────────────────────────────
-#  PHASE 1: PostgreSQL + Redis only
-#  To start: docker-compose up -d
-#  Kafka / Debezium are commented out — uncomment in Phase 3
+#  PHASE 3: Full stack — PostgreSQL + Redis + Kafka + Debezium + Worker
+#  Start: docker compose up -d
 # ─────────────────────────────────────────────────────────────────
 
 services:
@@ -20,9 +19,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Run init SQL on first boot
       - ./server/db/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql
-    # Enable WAL logical replication (required for Debezium in Phase 3)
+    # WAL level must be logical for Debezium CDC
     command: >
       postgres
         -c wal_level=logical
@@ -50,6 +48,133 @@ services:
       timeout: 3s
       retries: 10
 
+  # ── Zookeeper (required by Kafka) ──────────────────────────────
+  # WHY Zookeeper? Kafka uses it for distributed coordination:
+  # leader election, cluster metadata, consumer group offsets.
+  # Kafka 3.x can run without Zookeeper (KRaft mode), but the
+  # Debezium connector image we use targets Kafka 2.x/3.x + ZK.
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: ffee-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Apache Kafka ───────────────────────────────────────────────
+  # WHY Kafka over a simple queue?
+  # 1. Durability: messages are persisted on disk. If the worker crashes,
+  #    it resumes from its last committed offset — zero data loss.
+  # 2. Replay: you can re-process old events for debugging or migration.
+  # 3. Fan-out: multiple consumers can read the same topic independently.
+  #    Today: worker. Tomorrow: analytics, audit, alerting.
+  # 4. Back-pressure: producers don't block on slow consumers.
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: ffee-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"    # exposed for local dev tooling (kafka-ui, kafkacat)
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Two listeners:
+      # - PLAINTEXT: internal Docker network (used by Debezium, worker, kafka-ui)
+      # - PLAINTEXT_HOST: accessible from your laptop (port 9092)
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168    # 7 days
+      KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Debezium (Kafka Connect + PostgreSQL connector) ─────────────
+  # WHY Debezium over LISTEN/NOTIFY (Phase 2)?
+  # LISTEN/NOTIFY is ephemeral: if the server is down when a flag changes,
+  # the notification is LOST FOREVER. You'll have stale cache until the
+  # next update triggers a re-materialize.
+  #
+  # Debezium reads PostgreSQL's Write-Ahead Log (WAL). Every committed
+  # transaction is written to WAL BEFORE the client gets an ACK. Even
+  # if Debezium restarts, it resumes from the replication slot position —
+  # zero missed events, guaranteed at-least-once delivery.
+  debezium:
+    image: debezium/connect:2.6
+    container_name: ffee-debezium
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8083:8083"    # Kafka Connect REST API
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: ffee-debezium-connect
+      CONFIG_STORAGE_TOPIC: ffee_connect_configs
+      OFFSET_STORAGE_TOPIC: ffee_connect_offsets
+      STATUS_STORAGE_TOPIC: ffee_connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      LOG_LEVEL: WARN
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  # ── Connector registration (runs once, then exits) ─────────────
+  # Registers the Debezium PostgreSQL connector via the REST API.
+  # WHY a separate service? Debezium doesn't auto-read config files.
+  # The Kafka Connect REST API is the only way to register connectors.
+  # This init container waits for Debezium to be healthy, then POSTs
+  # the connector configuration and exits (restart: no).
+  connector-setup:
+    image: curlimages/curl:8.6.0
+    container_name: ffee-connector-setup
+    restart: "no"
+    depends_on:
+      debezium:
+        condition: service_healthy
+    volumes:
+      - ./debezium:/debezium:ro
+    command: >
+      sh -c "
+        echo 'Registering Debezium PostgreSQL connector...' &&
+        curl -sf -X POST http://ffee-debezium:8083/connectors \
+          -H 'Content-Type: application/json' \
+          -d @/debezium/connector-config.json &&
+        echo 'Connector registered successfully'
+      "
+
   # ── Flag API Server ────────────────────────────────────────────
   server:
     build:
@@ -59,7 +184,7 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-      - "9090:9090"   # Prometheus metrics endpoint
+      - "9090:9090"
     environment:
       DATABASE_URL: postgres://ffee:ffee_secret@postgres:5432/featureflags?sslmode=disable
       REDIS_ADDR: redis:6379
@@ -77,6 +202,52 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ── CDC Worker (Kafka consumer → Redis materializer) ───────────
+  # This is the Phase 3 core: a Go service that consumes Kafka topics
+  # produced by Debezium and materializes flag state to Redis.
+  # It REPLACES the LISTEN/NOTIFY path with a durable, buffered pipeline.
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: ffee-worker
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://ffee:ffee_secret@postgres:5432/featureflags?sslmode=disable
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_GROUP_ID: ffee-worker
+      KAFKA_TOPIC_FLAG_CONFIGS: ffee.public.flag_configs
+      KAFKA_TOPIC_TARGETING_RULES: ffee.public.targeting_rules
+      LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9095/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Kafka UI ───────────────────────────────────────────────────
+  # Visual dashboard: browse topics, see messages, consumer group lag.
+  # URL: http://localhost:8090
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: ffee-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ffee-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
   # ── Prometheus ─────────────────────────────────────────────────
   prometheus:
@@ -116,49 +287,11 @@ services:
     depends_on:
       - prometheus
 
-# ── PHASE 3: Uncomment below when ready ────────────────────────
-#  zookeeper:
-#    image: confluentinc/cp-zookeeper:7.6.0
-#    container_name: ffee-zookeeper
-#    environment:
-#      ZOOKEEPER_CLIENT_PORT: 2181
-#      ZOOKEEPER_TICK_TIME: 2000
-#    ports:
-#      - "2181:2181"
-#
-#  kafka:
-#    image: confluentinc/cp-kafka:7.6.0
-#    container_name: ffee-kafka
-#    depends_on:
-#      - zookeeper
-#    ports:
-#      - "9092:9092"
-#    environment:
-#      KAFKA_BROKER_ID: 1
-#      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-#      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-#      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-#      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-#      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-#      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-#
-#  debezium:
-#    image: debezium/connect:2.6
-#    container_name: ffee-debezium
-#    depends_on:
-#      - kafka
-#      - postgres
-#    ports:
-#      - "8083:8083"
-#    environment:
-#      BOOTSTRAP_SERVERS: kafka:29092
-#      GROUP_ID: debezium-group
-#      CONFIG_STORAGE_TOPIC: debezium_configs
-#      OFFSET_STORAGE_TOPIC: debezium_offsets
-#      STATUS_STORAGE_TOPIC: debezium_status
-
 volumes:
   postgres_data:
   redis_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_log:
   prometheus_data:
   grafana_data:
