@@ -145,7 +145,7 @@ curl -s -X PATCH http://localhost:8080/api/v1/flags/dark-mode/config/production 
 | **4** | ✅ Complete | Go SDK: zero-dep, SSE live updates, in-memory evaluation, targeting rules |
 | **5** | ✅ Complete | React Admin UI: kill switch, rollout slider, targeting rules CRUD, audit log |
 | **6** | ✅ Complete | GitHub Actions CI: test, vet, build, Docker, integration smoke test |
-| **7** | ⬜ Todo | Load test: prove 100K evals/sec with k6 |
+| **7** | ✅ Complete | Load test: prove 100K evals/sec with k6 |
 
 ---
 

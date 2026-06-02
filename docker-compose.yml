@@ -61,6 +61,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
       ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN
+      KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=ruok"
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
@@ -197,11 +198,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   # ── CDC Worker (Kafka consumer → Redis materializer) ───────────
   # This is the Phase 3 core: a Go service that consumes Kafka topics
@@ -228,11 +224,6 @@ services:
       KAFKA_TOPIC_FLAG_CONFIGS: ffee.public.flag_configs
       KAFKA_TOPIC_TARGETING_RULES: ffee.public.targeting_rules
       LOG_LEVEL: info
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9095/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
 
   # ── Kafka UI ───────────────────────────────────────────────────
   # Visual dashboard: browse topics, see messages, consumer group lag.
@@ -286,6 +277,39 @@ services:
       - ./grafana/dashboards:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus
+
+  # ── Loadtest App (Go server using SDK) ───────────────────────────
+  loadtest-app:
+    profiles:
+      - loadtest
+    build:
+      context: .
+      dockerfile: ./loadtest/Dockerfile
+    container_name: ffee-loadtest-app
+    ports:
+      - "8085:8085"
+    depends_on:
+      server:
+        condition: service_started
+    environment:
+      FFEE_SERVER_URL: http://server:8080
+      FFEE_ENVIRONMENT: production
+      PORT: 8085
+
+  # ── k6 Load Tester ───────────────────────────────────────────────
+  k6:
+    profiles:
+      - loadtest
+    image: grafana/k6:latest
+    container_name: ffee-k6
+    depends_on:
+      loadtest-app:
+        condition: service_started
+    volumes:
+      - ./loadtest:/loadtest
+    environment:
+      TARGET_URL: http://loadtest-app:8085/evaluate
+    command: run /loadtest/k6-script.js
 
 volumes:
   postgres_data:
