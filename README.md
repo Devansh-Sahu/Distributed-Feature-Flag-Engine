@@ -8,6 +8,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://postgresql.org)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis)](https://redis.io)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
+[![CI](https://github.com/Devansh-Sahu/Distributed-Feature-Flag-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Devansh-Sahu/Distributed-Feature-Flag-Engine/actions/workflows/ci.yml)
 
 ---
 
@@ -143,8 +144,8 @@ curl -s -X PATCH http://localhost:8080/api/v1/flags/dark-mode/config/production 
 | **3** | ✅ Complete | Kafka + Zookeeper + Debezium CDC, Go worker service, durable propagation |
 | **4** | ✅ Complete | Go SDK: zero-dep, SSE live updates, in-memory evaluation, targeting rules |
 | **5** | ✅ Complete | React Admin UI: kill switch, rollout slider, targeting rules CRUD, audit log |
-| **6** | ⬜ Todo | Load test: prove 100K evals/sec with k6 |
-| **7** | ⬜ Todo | GitHub Actions CI pipeline: build, test, Docker push |
+| **6** | ✅ Complete | GitHub Actions CI: test, vet, build, Docker, integration smoke test |
+| **7** | ⬜ Todo | Load test: prove 100K evals/sec with k6 |
 
 ---
 
