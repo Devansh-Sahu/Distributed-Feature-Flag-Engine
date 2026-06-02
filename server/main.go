@@ -108,6 +108,8 @@ func main() {
 		Cache:        redisCache,
 		Materializer: materializer,
 	}
+	// Phase 4: SSE stream handler for SDK live updates
+	streamHandler := &handlers.StreamHandler{Cache: redisCache}
 
 	// ── Router ────────────────────────────────────────────────────────
 	r := chi.NewRouter()
@@ -157,6 +159,15 @@ func main() {
 		// Phase 2: Cache status
 		r.Get("/cache/status", cacheHandler.CacheStatus)
 
+		// Phase 4: SSE stream — SDK connects here for live flag updates
+		// NOTE: This route bypasses the 30s timeout middleware (SSE is long-lived)
+		r.With(func(next http.Handler) http.Handler {
+			// Remove the timeout middleware for SSE connections
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, r)
+			})
+		}).Get("/stream/{envName}", streamHandler.StreamFlagUpdates)
+
 		// Environments CRUD
 		r.Route("/environments", func(r chi.Router) {
 			r.Get("/", envHandler.ListEnvironments)
@@ -168,11 +179,13 @@ func main() {
 
 	// ── API HTTP Server ────────────────────────────────────────────────
 	apiServer := &http.Server{
-		Addr:         ":" + cfg.ServerPort,
-		Handler:      r,
+		Addr:    ":" + cfg.ServerPort,
+		Handler: r,
+		// WriteTimeout must be 0 for SSE — otherwise the server will close
+		// the SSE connection after WriteTimeout seconds, disconnecting all SDKs.
+		WriteTimeout: 0,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		IdleTimeout:  600 * time.Second, // 10 minutes for SSE keep-alive
 	}
 
 	// ── Prometheus Metrics Server ──────────────────────────────────────
