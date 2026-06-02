@@ -167,14 +167,7 @@ services:
         condition: service_healthy
     volumes:
       - ./debezium:/debezium:ro
-    command: >
-      sh -c "
-        echo 'Registering Debezium PostgreSQL connector...' &&
-        curl -sf -X POST http://ffee-debezium:8083/connectors \
-          -H 'Content-Type: application/json' \
-          -d @/debezium/connector-config.json &&
-        echo 'Connector registered successfully'
-      "
+    command: ["sh", "-c", "echo 'Registering Debezium PostgreSQL connector...' && curl -sf -X POST http://ffee-debezium:8083/connectors -H 'Content-Type: application/json' -d @/debezium/connector-config.json && echo 'Connector registered successfully'"]
 
   # ── Flag API Server ────────────────────────────────────────────
   server:
