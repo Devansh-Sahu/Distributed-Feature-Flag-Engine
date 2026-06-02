@@ -365,7 +365,3 @@ feature-flag-engine/
 ```
 
 ---
-
-## Resume Bullet
-
-> Designed and implemented a distributed feature flag evaluation engine in Go — sub-0.5ms local evaluation via in-memory SDK backed by Redis cache, flag change propagation via PostgreSQL WAL → Debezium → Kafka CDC pipeline with < 2-second kill-switch SLA, consistent hashing (FNV-1a on `flagKey + ":" + userID`) for deterministic per-flag user bucketing, SSE-based SDK live updates, and React admin dashboard. Full Docker Compose stack (Postgres, Redis, Kafka, Debezium, Prometheus, Grafana). Open-sourced on GitHub.
