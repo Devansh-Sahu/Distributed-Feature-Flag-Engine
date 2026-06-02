@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s      # Scrape every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  scrape_timeout: 10s
+
+# Alert manager config (Phase 7 — add alerting rules here)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+scrape_configs:
+  # ── Feature Flag API Server ────────────────────────────────────
+  - job_name: "ffee-server"
+    static_configs:
+      - targets: ["server:9090"]
+    metrics_path: /metrics
+    scrape_interval: 10s  # Higher frequency for the main service
+
+  # ── Prometheus self-monitoring ─────────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ── Redis (add redis_exporter in Phase 7) ─────────────────────
+  # - job_name: "redis"
+  #   static_configs:
+  #     - targets: ["redis-exporter:9121"]
+
+  # ── PostgreSQL (add postgres_exporter in Phase 7) ─────────────
+  # - job_name: "postgres"
+  #   static_configs:
+  #     - targets: ["postgres-exporter:9187"]
